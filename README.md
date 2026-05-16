@@ -1,5 +1,7 @@
 # AI Programming Assistant
 
+![Python](https://img.shields.io/badge/Python-3.8+-blue.svg) ![License](https://img.shields.io/badge/License-MIT-green.svg)
+
 A desktop GUI tool designed to prepare and compile your project's codebase into a single, optimized prompt for AI coding assistants. It helps you select relevant files, manage token limits, and sanitize sensitive data before sending your code to LLMs.
 
 Early on in using AI as an assistant to programming, I realized I had a need to quickly (and repeatedly) compile multiple source code files from disk into a format that AI could make use of. I also was playing with the idea of a library with versioned/dated prompts and other ideas that I eventually negelected. The main thing I needed, and still use, was the ability to select a project directory, set the language, perhaps have a default prompt and have it all wrapped into a single file I could attach into a clean context window.
@@ -7,9 +9,6 @@ Early on in using AI as an assistant to programming, I realized I had a need to 
 In short, this tool represents present usefulness mixed with plans that fell by the wayside or that I never pursued: 
 - The prompt library is dated. My prompts today look very different today than what's included but you can use them as starting points, replace them or disregard them.
 - The PII feature is nice and needs to be better integrated. It really should be a checkbox on/off
-
-
-![Python](https://img.shields.io/badge/Python-3.8+-blue.svg) ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 ## ✨ Features
 
