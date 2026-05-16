@@ -4,11 +4,23 @@
 
 A desktop GUI tool designed to prepare and compile your project's codebase into a single, optimized prompt for AI coding assistants. It helps you select relevant files, manage token limits, and sanitize sensitive data before sending your code to LLMs.
 
-Early on in using AI as an assistant to programming, I realized I had a need to quickly (and repeatedly) compile multiple source code files from disk into a format that AI could make use of. I also was playing with the idea of a library with versioned/dated prompts and other ideas that I eventually negelected. The main thing I needed, and still use, was the ability to select a project directory, set the language, perhaps have a default prompt and have it all wrapped into a single file I could attach into a clean context window.
+Early on in using AI as an assistant to programming, I realized through experimentation with various models
+that I had a need to quickly (and repeatedly) compile multiple source code files from disk into
+a format that AI could make use of. It was clear that the context window would become corrupt and the
+only way to make further progress on a project, especially on larger projects, was to create a new chat 
+session, with a clean context window, providing the source as it currently existed. Many AI users do not
+understand how pervasive and how serious context window corruption is.
+
+[arXiv 2604.15597](https://arxiv.org/abs/2604.15597) -- LLMs Corrupt Your Documents When You Delegate -- recently (April 2026) showed that this is still a serious
+problem:
+
+> Our large-scale experiment with 19 LLMs reveals that current models degrade documents during delegation: even frontier models (Gemini 3.1 Pro, Claude 4.6 Opus, GPT 5.4) corrupt an average of 25% of document content by the end of long workflows, with other models failing more severely.
+
+I also was playing with the idea of a library with versioned/dated prompts and other ideas that I eventually negelected. The main thing I needed, and still use, was the ability to select a project directory, set the language, perhaps have a default prompt and have it all wrapped into a single file I could attach into a clean context window.
 
 In short, this tool represents present usefulness mixed with plans that fell by the wayside or that I never pursued: 
-- The prompt library is dated. My prompts today look very different today than what's included but you can use them as starting points, replace them or disregard them.
-- The PII feature is nice and needs to be better integrated. It really should be a checkbox on/off
+- The prompt library is dated. My prompts today look very different today than what's included but you can use them as starting points, replace them or ignore them.
+- The PII feature is nice and needs to better integration. It really should be a checkbox on/off
 
 ## ✨ Features
 
