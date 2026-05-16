@@ -16,7 +16,7 @@ problem:
 
 > Our large-scale experiment with 19 LLMs reveals that current models degrade documents during delegation: even frontier models (Gemini 3.1 Pro, Claude 4.6 Opus, GPT 5.4) corrupt an average of 25% of document content by the end of long workflows, with other models failing more severely.
 
-I also was playing with the idea of a library with versioned/dated prompts and other ideas that I eventually negelected. The main thing I needed, and still use, was the ability to select a project directory, set the language, perhaps have a default prompt and have it all wrapped into a single file I could attach into a clean context window.
+I also was playing with the idea of a library with versioned/dated prompts and other ideas that I eventually neglected. The main thing I needed, and still use, was the ability to select a project directory, set the language, perhaps have a default prompt and have it all wrapped into a single file I could attach into a clean context window.
 
 In short, this tool represents present usefulness mixed with plans that fell by the wayside or that I never pursued: 
 - The prompt library is dated. My prompts today look very different today than what's included but you can use them as starting points, replace them or ignore them.
