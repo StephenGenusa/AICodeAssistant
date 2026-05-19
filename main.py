@@ -54,6 +54,10 @@ try:
 except ImportError:
     toksum = None
 
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1201,22 +1205,54 @@ class AIProgrammingAssistantDialog:
         )
         self.token_calc_thread.start()
 
-    def _count_tokens(self, text, model_name):
-        """Count tokens using toksum (which delegates to tiktoken for OpenAI
-            models and uses provider-specific heuristics for others)."""
-        if toksum:
-            try:
-                count = toksum.count_tokens(text, model_name)
-                # toksum uses tiktoken under the hood for OpenAI models
-                # and model-aware approximations for other providers.
-                method = "tiktoken" if model_name.startswith(("gpt-", "text-", "code-")) or "o" in model_name.split(
-                    "-")[:2] else "toksum_approx"
-                return count, method
-            except Exception as exc:
-                print(f"toksum token counting error for '{model_name}': {exc}")
+    def _count_tokens(self, text: str, model_name: str) -> tuple[int, str]:
+        """Return (token_count, source). 'source' indicates which backend was used."""
+        _O200K_PREFIXES = ("gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5",
+                           "o1", "o3", "o4", "chatgpt-4o")
 
-        # Fallback when toksum is not installed.
-        return len(text) // 4, "char_approx"
+        if not text:
+            return 0, "empty"
+
+        # 1. toksum — broadest model coverage.
+        # toksum raises its own TokenizationError; the class lives at different
+        # paths across versions, so look it up defensively and always keep a
+        # broad Exception net so failures drop through to tiktoken.
+        if toksum:
+            toksum_error = (
+                    getattr(toksum, "TokenizationError", None)
+                    or getattr(getattr(toksum, "exceptions", None),
+                               "TokenizationError", None)
+            )
+            try:
+                return toksum.count_tokens(text, model_name), "toksum"
+            except Exception as exc:
+                kind = type(exc).__name__
+                if toksum_error and isinstance(exc, toksum_error):
+                    print(f"toksum TokenizationError for {model_name!r}: {exc}. "
+                          f"Falling back to tiktoken.")
+                else:
+                    print(f"toksum failed for {model_name!r} ({kind}): {exc}. "
+                          f"Falling back to tiktoken.")
+
+        # 2. tiktoken — exact for OpenAI; let it pick the encoding by model name.
+        if tiktoken:
+            try:
+                try:
+                    encoding = tiktoken.encoding_for_model(model_name)
+                except KeyError:
+                    # Pick a sensible default by model family rather than blanket
+                    # cl100k_base, which undercounts modern OpenAI models.
+                    default = ("o200k_base"
+                               if any(model_name.startswith(p) for p in _O200K_PREFIXES)
+                               else "cl100k_base")
+                    encoding = tiktoken.get_encoding(default)
+                return len(encoding.encode(text)), "tiktoken"
+            except Exception as exc:
+                print(f"tiktoken failed for {model_name!r} "
+                      f"({type(exc).__name__}): {exc}. Falling back to char approx.")
+
+        # 3. Last-resort heuristic (English-biased, ~25% error typical).
+        return max(1, len(text) // 4), "char_approx"
 
     def _background_token_calculation(
             self,
@@ -1480,22 +1516,11 @@ class AIProgrammingAssistantDialog:
             if item_id in self.item_id_to_path
         }
 
-        all_files: List[pathlib.Path] = []
-        for root, dirs, files in os.walk(self.root_dir):
-            if self.exclude_var.get():
-                dirs[:] = [d for d in dirs if d not in self.excluded_dirs]
-            for file in files:
-                file_path = pathlib.Path(root) / file
-                ext = file_path.suffix.lower()
-                if ext in self.current_profile.always_excluded_extensions:
-                    continue
-                all_files.append(file_path)
-
-        try:
-            self._identify_modules(all_files)
-        except Exception as exc:
-            print(f"Error re-identifying modules: {exc}")
-
+        all_files: List[pathlib.Path] = collect_project_files(
+            self.root_dir,
+            self.current_profile,
+            self.exclude_var.get()
+        )
         self._populate_tree(all_files)
 
         for item_id, path in self.item_id_to_path.items():
@@ -1570,6 +1595,10 @@ class AIProgrammingAssistantDialog:
         if not item_id:
             return
 
+        element = self.tree.identify_element(x, y)
+        if element == "Treeitem.indicator":
+            return
+
         # 'tree' region means the main column with the icons/text
         # 'heading' means the column header
         if region == "tree":
@@ -1579,9 +1608,6 @@ class AIProgrammingAssistantDialog:
                 if self.tree.item(item_id, "values")
                 else None
             )
-            # If you only want clicking the "[ ]" part to work, you could check
-            # the x coordinate relative to the indent, but checking the region
-            # is usually more reliable for "is this the file column?"
 
             if item_type == "file":
                 self._set_item_selected(item_id, "[✓]" not in text)
@@ -1871,29 +1897,28 @@ class AIProgrammingAssistantDialog:
 # ---------------------------------------------------------------------------
 # File collection
 # ---------------------------------------------------------------------------
-
-def collect_files(
+def collect_project_files(
         directory: pathlib.Path,
         profile: ProjectProfile,
-        file_type_selection: Dict[str, bool],
+        exclude_dirs: bool = True
 ) -> List[pathlib.Path]:
     """
-    Walk `directory`, applying profile-driven exclusions and the caller's
-    file-type selection. Honors `always_excluded_extensions`.
+    Walk the directory, applying profile-driven directory exclusions and
+    always-excluded extensions. Ignores file type selection (UI concern).
     """
-    excluded_dirs = profile.excluded_dirs
+    excluded_dirs = set(profile.excluded_dirs)
     always_excluded = profile.always_excluded_extensions
     collected: List[pathlib.Path] = []
 
     for root, dirs, files in os.walk(directory):
-        dirs[:] = [d for d in dirs if d not in excluded_dirs]
+        if exclude_dirs:
+            dirs[:] = [d for d in dirs if d not in excluded_dirs]
         for filename in files:
             file_path = pathlib.Path(root) / filename
             ext = file_path.suffix.lower()
             if ext in always_excluded:
                 continue
-            if file_type_selection.get(ext, False):
-                collected.append(file_path)
+            collected.append(file_path)
 
     return collected
 
@@ -1948,7 +1973,7 @@ def main():
     file_type_selection = dict(profile.default_file_types)
     file_type_selection.update(config.get_file_type_overrides(profile_name))
 
-    files = collect_files(initial_wd, profile, file_type_selection)
+    files = collect_project_files(initial_wd, profile, exclude_dirs=True)
     if not files:
         messagebox.showwarning(
             "No Files Found",
