@@ -59,6 +59,55 @@ try:
 except ImportError:
     tiktoken = None
 
+
+# ---------------------------------------------------------------------------
+# Sanitization Utility
+# ---------------------------------------------------------------------------
+
+def sanitize_output(text: str) -> str:
+    """
+    Sanitize text to remove potentially sensitive information.
+
+    This function is code-aware: it only redacts values that are enclosed in
+    quotes (string literals) to avoid mangling variable names or logic.
+    """
+    import re
+
+    # Pattern format: (Key_Capture_Group)(Quote_Capture_Group)(Content)(Quote_Backreference)
+    # Replacement format: \1\2[REDACTED]\2  (Preserves key and quotes)
+    patterns = [
+        # Common secret key-value pairs (quoted values only)
+        (r'((?:api[_-]?key|password|secret|token|access[_-]?key|client[_-]?id|tenant[_-]?id|connection[_-]?string)\s*[:=]\s*)(["\'])(.*?)\2',
+         r'\1\2[REDACTED]\2'),
+
+        # Specific environment variable style assignments
+        (r'(CLIENT_SECRET\s*=\s*)(["\'])(.*?)\2', r'\1\2[REDACTED_CLIENT_SECRET]\2'),
+        (r'(redirect[_-]?uri\s*=\s*)(["\'])(.*?)\2', r'\1\2[REDACTED_URI]\2'),
+
+        # GUIDs in quotes
+        (r'(["\'])([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\1',
+         r'\1[REDACTED_GUID]\1'),
+
+        # URLs with embedded tokens/auth in quotes
+        (r'(["\'])https?://[^"\'\s]+?(?:token|auth|key|secret|password)=[^"\'\s&]+\1',
+         r'\1https://[REDACTED_URL_WITH_AUTH]\1'),
+
+        # Emails (quoted)
+        (r'(["\'])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\1',
+         r'\1[REDACTED_EMAIL]\1'),
+
+        # Generic IP Addresses (often unquoted in code, but generally safe to redact even if logic depends on it for security reasons)
+        # If strict code-logic preservation is needed, this could be restricted to quotes only.
+        (r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]'),
+    ]
+
+    sanitized = text
+    for pattern, replacement in patterns:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+
+    return sanitized
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -435,6 +484,7 @@ class AIProgrammingAssistantDialog:
             "general_ai_instructions": "",
             "main_file": None,
             "profile": initial_profile,
+            "sanitize_output": False,  # Added for OK button flow
         }
 
         self.item_id_to_path: Dict[str, pathlib.Path] = {}
@@ -478,6 +528,7 @@ class AIProgrammingAssistantDialog:
         # Profile UI.
         self.profile_var: Optional[tk.StringVar] = None
         self.profile_dropdown = None
+        self.sanitize_var: Optional[tk.BooleanVar] = None  # Added for checkbox
         self.instructions_manually_edited = False
 
     # ------------------------------------------------------------------
@@ -506,7 +557,7 @@ class AIProgrammingAssistantDialog:
     # ------------------------------------------------------------------
 
     def show(self, file_list, default_ai_instructions=""):
-        """Display the dialog. Returns (files, status, instructions, main_file, profile)."""
+        """Display the dialog. Returns (files, status, instructions, main_file, profile, sanitize_flag)."""
         if file_list:
             self.root_dir = self._find_common_root([str(p) for p in file_list])
 
@@ -515,6 +566,7 @@ class AIProgrammingAssistantDialog:
         self.result["general_ai_instructions"] = default_ai_instructions
         self.result["main_file"] = None
         self.result["profile"] = self.current_profile
+        self.result["sanitize_output"] = False
 
         try:
             self._identify_modules(file_list)
@@ -533,7 +585,7 @@ class AIProgrammingAssistantDialog:
 
             def safe_close():
                 try:
-                    self._on_cancel()
+                    self._on_exit()
                 except Exception:
                     self.root.destroy()
 
@@ -556,6 +608,7 @@ class AIProgrammingAssistantDialog:
             self.result["general_ai_instructions"],
             self.result["main_file"],
             self.result["profile"],
+            self.result["sanitize_output"],  # Return the checkbox state
         )
 
     def _calculate_window_size_and_position(self):
@@ -741,19 +794,18 @@ class AIProgrammingAssistantDialog:
         # --- Buttons ---
         button_frame = ttk.Frame(self.main_frame)
         button_frame.pack(fill=tk.X, pady=(5, 0))
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(
+        ttk.Button(button_frame, text="Compile and Close", command=self._on_ok).pack(
             side=tk.RIGHT, padx=5
         )
-        ttk.Button(button_frame, text="Sanitize", command=self._on_sanitize).pack(
+        ttk.Button(button_frame, text="Exit", command=self._on_exit).pack(
             side=tk.RIGHT, padx=5
         )
-        ttk.Button(button_frame, text="Copy Prompt", command=self._on_copy_prompt).pack(
+        ttk.Button(button_frame, text="Refresh Files", command=self._on_refresh).pack(
             side=tk.RIGHT, padx=5
         )
-        ttk.Button(button_frame, text="OK", command=self._on_ok).pack(
+        ttk.Button(button_frame, text="Prompt to Clipboard", command=self._on_copy_prompt).pack(
             side=tk.RIGHT, padx=5
         )
-        # Compile button added before OK
         ttk.Button(button_frame, text="Compile", command=self._on_compile).pack(
             side=tk.RIGHT, padx=5
         )
@@ -803,10 +855,17 @@ class AIProgrammingAssistantDialog:
             frame, text="Save as Profile...", command=self._on_save_as_profile,
         ).pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(
+        active_label = ttk.Label(
             frame,
             text=f"Active: {self.current_profile.display_name}",
             foreground="gray",
+        )
+        active_label.pack(side=tk.LEFT, padx=10)
+
+        # Added Sanitize Checkbox
+        self.sanitize_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame, text="Sanitize Output", variable=self.sanitize_var
         ).pack(side=tk.LEFT, padx=10)
 
     def _on_instructions_key(self, _event):
@@ -958,6 +1017,14 @@ class AIProgrammingAssistantDialog:
             compiler = CodeCompiler(self.root_dir, self.current_profile)
             compiler.add_ai_instructions(instructions)
             compiler.compile(selected_files, main_file)
+
+            # Apply sanitization if checked
+            if self.sanitize_var.get():
+                compiler.compiled_content = sanitize_output(compiler.compiled_content)
+                # Overwrite the file with sanitized content
+                with compiler.output_filename.open("w", encoding="utf-8") as outfile:
+                    outfile.write(compiler.compiled_content)
+
             clipboard_success = compiler.copy_to_clipboard()
 
             message = (
@@ -965,6 +1032,8 @@ class AIProgrammingAssistantDialog:
                 f"'{compiler.output_filename}'.\n"
                 f"Profile used: {self.current_profile.display_name}"
             )
+            if self.sanitize_var.get():
+                message += "\nOutput has been sanitized."
             if main_file:
                 message += f"\nMain program file: {main_file.name}"
             if clipboard_success:
@@ -981,67 +1050,24 @@ class AIProgrammingAssistantDialog:
                 "Error", f"An error occurred during compilation: {exc}"
             )
 
+    def _on_refresh(self):
+        """Refresh the file tree by re-walking the filesystem."""
+        self._rebuild_tree_from_disk()
+
     # ------------------------------------------------------------------
-    # Sanitize / Copy
+    # Copy
     # ------------------------------------------------------------------
-
-    def _on_sanitize(self):
-        try:
-            current_text = self.ai_instructions_text.get("1.0", tk.END)
-            import re
-
-            patterns = [
-                (r'api[_-]?key[s]?\s*[:=]\s*["\']?\w{20,}["\']?', 'api_key: [REDACTED]'),
-                (r'password\s*[:=]\s*["\']?\S+["\']?', 'password: [REDACTED]'),
-                (r'secret\s*[:=]\s*["\']?\S+["\']?', 'secret: [REDACTED]'),
-                (r'token\s*[:=]\s*["\']?\S+["\']?', 'token: [REDACTED]'),
-                (r'access[_-]?key\s*[:=]\s*["\']?\S+["\']?', 'access_key: [REDACTED]'),
-                (r'connection[_-]?string\s*[:=]\s*["\']?.+?["\']', 'connection_string: [REDACTED]'),
-                (r'tenant[_-]?id\s*[:=]\s*["\']?([0-9a-f-]{36})["\']?',
-                 r'tenant_id: "[REDACTED_TENANT_ID]"'),
-                (r'client[_-]?id\s*[:=]\s*["\']?([0-9a-f-]{36})["\']?',
-                 r'client_id: "[REDACTED_CLIENT_ID]"'),
-                (r'(CLIENT_SECRET\s*=\s*)["\']([^"\']+)["\']',
-                 r'client_secret = "[REDACTED_CLIENT_SECRET]"'),
-                (r'(redirect[_-]?uri\s*=\s*)["\']([^"\']+)["\']',
-                 r'redirect_uri = "[REDACTED_URI]"'),
-                (r'(["\'])([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\1',
-                 r'\1[REDACTED_GUID]\1'),
-                (r'([A-Za-z_][A-Za-z0-9_]*(?:key|token|secret|password|credential)s?)\s*[:=]\s*["\']([^"\']+)["\']',
-                 r'\1: "[REDACTED]"'),
-                (r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]'),
-                (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[REDACTED_EMAIL]'),
-                (r'https?://[^"\'\s]+?(?:token|auth|key|secret|password)=[^"\'\s&]+',
-                 'https://[REDACTED_URL_WITH_AUTH]'),
-            ]
-
-            sanitized = current_text
-            for pattern, replacement in patterns:
-                sanitized = re.sub(pattern, replacement, sanitized)
-
-            self.ai_instructions_text.delete("1.0", tk.END)
-            self.ai_instructions_text.insert("1.0", sanitized)
-
-            # Sanitization changed the text, so refresh the token count.
-            self._schedule_token_recalc()
-
-            messagebox.showinfo(
-                "Sanitization Complete",
-                "The prompt has been sanitized to remove potentially sensitive information.",
-            )
-        except Exception as exc:
-            messagebox.showerror(
-                "Sanitization Error", f"An error occurred during sanitization: {exc}"
-            )
 
     def _on_copy_prompt(self):
         try:
             prompt_text = self.ai_instructions_text.get("1.0", tk.END)
+            if self.sanitize_var.get():
+                prompt_text = sanitize_output(prompt_text)
             pyperclip.copy(prompt_text)
-            messagebox.showinfo(
-                "Copy Complete",
-                "The current prompt has been copied to your clipboard.",
-            )
+            status = "The current prompt has been copied to your clipboard."
+            if self.sanitize_var.get():
+                status = "The sanitized prompt has been copied to your clipboard."
+            messagebox.showinfo("Copy Complete", status)
         except Exception as exc:
             messagebox.showerror(
                 "Copy Error",
@@ -1837,6 +1863,7 @@ class AIProgrammingAssistantDialog:
             self.result["main_file"] = main_file
             self.result["status"] = "ok"
             self.result["profile"] = self.current_profile
+            self.result["sanitize_output"] = self.sanitize_var.get()  # Save checkbox state
 
             # Persist profile-related state.
             self.config.set_directory_profile(self.root_dir, self.current_profile.name)
@@ -1864,14 +1891,6 @@ class AIProgrammingAssistantDialog:
             except tk.TclError:
                 pass
 
-            # NOTE: we deliberately do NOT show an indeterminate progress
-            # window here. The previous implementation created a
-            # `ttk.Progressbar`, called `start()` (which schedules a
-            # recurring `after` callback for autoincrement), and then
-            # destroyed the root — leaving that recurring callback queued
-            # against a dead interpreter. Compilation runs synchronously in
-            # `main()` after `mainloop()` exits, so there is nothing to
-            # animate at this point anyway.
             self.root.destroy()
 
         except Exception as exc:
@@ -1883,7 +1902,7 @@ class AIProgrammingAssistantDialog:
                 "Error", f"An error occurred while processing: {exc}"
             )
 
-    def _on_cancel(self):
+    def _on_exit(self):
         self.cancel_calculation = True
         self._cancel_pending_after_ids()
         self.result["status"] = "cancel"
@@ -1962,13 +1981,6 @@ def main():
         profile = profile_manager.load_profile("Python")
         profile_name = "Python"
 
-    # print(f"[debug] saved_profile_name = {saved_profile_name!r}")
-    # print(f"[debug] detected_name      = {detected_name!r}")
-    # print(f"[debug] last_profile       = {config.last_profile!r}")
-    # print(f"[debug] chosen profile     = {profile.name!r}")
-    # print(f"[debug] default_instructions starts with: "
-    #       f"{(profile.default_instructions or '')[:80]!r}")
-
     # Compute effective file-type selection: defaults overlaid with overrides.
     file_type_selection = dict(profile.default_file_types)
     file_type_selection.update(config.get_file_type_overrides(profile_name))
@@ -1991,7 +2003,8 @@ def main():
         height=700,
     )
 
-    selected_files, status, instructions, main_file, final_profile = dialog.show(
+    # Unpack the new sanitize_output flag from the dialog result
+    selected_files, status, instructions, main_file, final_profile, sanitize_flag = dialog.show(
         files, default_ai_instructions=profile.default_instructions,
     )
 
@@ -2009,6 +2022,14 @@ def main():
         compiler = CodeCompiler(initial_wd, final_profile)
         compiler.add_ai_instructions(instructions)
         compiler.compile(selected_files, main_file)
+
+        # Apply sanitization if checked in the dialog
+        if sanitize_flag:
+            compiler.compiled_content = sanitize_output(compiler.compiled_content)
+            # Overwrite the file with sanitized content
+            with compiler.output_filename.open("w", encoding="utf-8") as outfile:
+                outfile.write(compiler.compiled_content)
+
         clipboard_success = compiler.copy_to_clipboard()
 
         message = (
@@ -2016,6 +2037,8 @@ def main():
             f"'{compiler.output_filename}'.\n"
             f"Profile used: {final_profile.display_name}"
         )
+        if sanitize_flag:
+            message += "\nOutput has been sanitized."
         if main_file:
             message += f"\nMain program file: {main_file.name}"
         if clipboard_success:

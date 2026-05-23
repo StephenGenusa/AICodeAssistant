@@ -76,7 +76,6 @@ python ai_programming_assistant.py
 5.  **AI Instructions**:
     *   Select a prompt from the **Prompt Library** dropdown, or
     *   Write your custom instructions in the "General AI Instructions" text box.
-6.  **Sanitize (Optional)**: Click the **Sanitize** button to automatically redact sensitive information like API keys and passwords from your instructions.
 7.  **Compile & Copy**:
     *   Click **Compile** to generate the output file (`For AI Questions.txt`) and copy the content to your clipboard without closing the dialog.
     *   Click **OK** to compile, copy, and close the application.
