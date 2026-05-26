@@ -248,7 +248,7 @@ class CodeCompiler:
             self,
             initial_wd: pathlib.Path,
             profile: ProjectProfile,
-            output_filename: str = os.path.join(os.getenv('USERPROFILE'), 'Desktop', "For AI Questions.txt"),
+            output_filename: str = os.path.join(os.path.expanduser('~'), 'Desktop', "For AI Questions.txt"),
     ):
         self.initial_wd = initial_wd
         self.profile = profile
